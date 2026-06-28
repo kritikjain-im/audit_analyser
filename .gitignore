@@ -1,0 +1,14 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Local virtual environments
+.venv/
+venv/
+ENV/
+
+# Project caches and output reports
+.cache/
+output/*.xlsx
+output/~$*.xlsx
