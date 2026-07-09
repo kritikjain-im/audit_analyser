@@ -193,8 +193,9 @@ def create_excel_report(data_calls, field_accuracies, overall_accuracy, output_p
     # --- Sheet 3: Summary Statistics ---
     ws3 = wb.create_sheet(title="Summary Statistics")
     
+    # Updated headers to include "Inferred"
     headers3 = [
-        "Field Name", "Correct", "Correct (Not Discussed)", "Incorrect",
+        "Field Name", "Correct", "Correct (Not Discussed)", "Inferred", "Incorrect",
         "Missing", "Hallucination", "Matched Calls", "Total calls", "Accuracy"
     ]
     ws3.append(headers3)
@@ -206,6 +207,7 @@ def create_excel_report(data_calls, field_accuracies, overall_accuracy, output_p
         counts = {
             "Correct": 0,
             "Correct (Not Discussed)": 0,
+            "Inferred": 0,
             "Incorrect": 0,
             "Missing": 0,
             "Hallucination": 0
@@ -218,12 +220,13 @@ def create_excel_report(data_calls, field_accuracies, overall_accuracy, output_p
                 counts[val] += 1
             matched_calls += item["matches_by_field"].get(field_key, 0)
             
-        acc = matched_calls / total_calls if total_calls > 0 else 0.0
+        acc = (matched_calls / total_calls) * 100 if total_calls > 0 else 0.0
         
         row_data = [
             field_label,
             counts["Correct"],
             counts["Correct (Not Discussed)"],
+            counts["Inferred"],
             counts["Incorrect"],
             counts["Missing"],
             counts["Hallucination"],
@@ -234,10 +237,10 @@ def create_excel_report(data_calls, field_accuracies, overall_accuracy, output_p
         ws3.append(row_data)
         field_rows.append(acc)
         
-    # Overall summary row
+    # Overall summary row (10 columns)
     overall_acc = sum(field_rows) / len(field_rows) if field_rows else 0.0
     ws3.append([
-        "Overall Accuracy:", "", "", "", "", "", "", "", overall_acc
+        "Overall Accuracy:", "", "", "", "", "", "", "", "", overall_acc
     ])
     
     # Header 3 styling
@@ -256,13 +259,13 @@ def create_excel_report(data_calls, field_accuracies, overall_accuracy, output_p
         ws3.cell(row=r_idx, column=1).font = font_normal
         ws3.cell(row=r_idx, column=1).border = thin_border
         
-        for c_idx in range(2, 9):
+        for c_idx in range(2, 10):
             cell = ws3.cell(row=r_idx, column=c_idx)
             cell.font = font_normal
             cell.alignment = Alignment(horizontal="center", vertical="center")
             cell.border = thin_border
             
-        ws3.cell(row=r_idx, column=9).number_format = "0%"
+        ws3.cell(row=r_idx, column=10).number_format = '0"%"'
         
     # Overall summary row styling
     summary_r_idx = ws3.max_row
@@ -275,10 +278,9 @@ def create_excel_report(data_calls, field_accuracies, overall_accuracy, output_p
         if cell.column > 1:
             cell.alignment = Alignment(horizontal="center", vertical="center")
             
-    ws3.cell(row=summary_r_idx, column=9).number_format = "0.00%"
+    ws3.cell(row=summary_r_idx, column=10).number_format = '0.00"%"'
     
     ws3.freeze_panes = "A2"
     auto_fit_columns(ws3)
     
     wb.save(output_path)
-
