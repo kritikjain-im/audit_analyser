@@ -20,6 +20,19 @@ def is_empty(val):
     val_str = str(val).strip()
     return val_str in ["", "nan", "NaN", "NULL", "None", "<NA>"]
 
+def load_csv_robust(file_path):
+    """
+    Loads a CSV file with automatic encoding fallback.
+    """
+    encodings = ['utf-8', 'latin1', 'cp1252', 'utf-8-sig']
+    for enc in encodings:
+        try:
+            return pd.read_csv(file_path, dtype=str, encoding=enc)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    # Fallback with replacement of un-decodable bytes
+    return pd.read_csv(file_path, dtype=str, encoding='utf-8', errors='replace')
+
 def main():
     # Verify input files exist
     if not os.path.exists(CALLS_CSV_PATH):
@@ -30,9 +43,9 @@ def main():
         return
 
     print("Loading data...")
-    # Load files. Force string datatype to preserve ID formatting
-    calls_df = pd.read_csv(CALLS_CSV_PATH, dtype=str)
-    ai_audit_df = pd.read_csv(AI_AUDIT_CSV_PATH, dtype=str)
+    # Load files using robust encoding fallback
+    calls_df = load_csv_robust(CALLS_CSV_PATH)
+    ai_audit_df = load_csv_robust(AI_AUDIT_CSV_PATH)
 
     print(f"Loaded {len(calls_df)} rows from calls.csv.")
     print(f"Loaded {len(ai_audit_df)} rows from ai_audit_data.csv.")

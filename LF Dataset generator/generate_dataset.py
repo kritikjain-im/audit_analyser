@@ -3,6 +3,7 @@ import sys
 import pandas as pd
 import json
 import logging
+import ast
 
 # Ensure parent directory is in sys.path to allow imports if needed
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -14,135 +15,222 @@ import utils
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-def load_and_preprocess_csv(file_path, required_cols_mapping, description):
+def extract_inferred_details_from_call_json(call_json_str):
     """
-    Loads CSV, validates that necessary columns (or their aliases) exist,
-    normalizes Call ID, handles duplicates, and returns cleaned DataFrame and resolved column names.
+    Dynamically extracts buyer and seller location/name details from the call_json structure
+    and compiles them into a standardized inferred_details JSON string.
+    """
+    if pd.isna(call_json_str) or not isinstance(call_json_str, str):
+        return None
+    try:
+        # Safely parse JSON or Python dict representation
+        try:
+            data = json.loads(call_json_str)
+        except json.JSONDecodeError:
+            data = ast.literal_eval(call_json_str.strip())
+            
+        if not isinstance(data, dict):
+            return None
+            
+        buyer_details = data.get("buyer_details", {})
+        seller_details = data.get("seller_details", {})
+        
+        buyer_name = buyer_details.get("buyer_name") or buyer_details.get("name") or ""
+        buyer_location = buyer_details.get("buyer_location", {})
+        buyer_city = ""
+        if isinstance(buyer_location, dict):
+            buyer_city = buyer_location.get("buyer_city") or buyer_location.get("city") or ""
+        elif isinstance(buyer_location, str):
+            buyer_city = buyer_location
+            
+        buyer_number = buyer_details.get("buyer_number") or buyer_details.get("buyer_phone") or data.get("buyer_Number") or ""
+        
+        seller_name = seller_details.get("seller_name") or seller_details.get("name") or ""
+        seller_location = seller_details.get("seller_location", {})
+        seller_city = ""
+        if isinstance(seller_location, dict):
+            seller_city = seller_location.get("seller_city") or seller_location.get("city") or ""
+        elif isinstance(seller_location, str):
+            seller_city = seller_location
+            
+        inferred = {
+            "buyer_city": buyer_city,
+            "buyer_name": buyer_name,
+            "buyer_number": buyer_number,
+            "seller_city": seller_city,
+            "seller_name": seller_name
+        }
+        if any(inferred.values()):
+            return json.dumps(inferred, ensure_ascii=False)
+    except Exception as e:
+        logger.debug(f"Failed to extract inferred_details from call_json: {e}")
+        
+    return None
+
+def load_and_preprocess_csv(file_path, description):
+    """
+    Loads CSV, normalizes empty values, and handles encoding robustly.
     """
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"Input file not found at: {file_path}")
         
     logger.info(f"Loading {description} from {file_path}...")
-    # Load the CSV
     try:
-        df = pd.read_csv(file_path, dtype=str)
+        df = utils.load_csv_robust(file_path)
     except Exception as e:
         logger.error(f"Error reading CSV file {file_path}: {e}")
         raise
         
     logger.info(f"Loaded {len(df)} rows from {description}.")
-    
-    # Resolve required columns
-    resolved_cols = {}
-    for key, aliases in required_cols_mapping.items():
-        col_name = utils.resolve_column(df, aliases)
-        if not col_name:
-            raise KeyError(f"Required column for '{key}' (tried aliases: {aliases}) not found in {description} columns: {list(df.columns)}")
-        resolved_cols[key] = col_name
-        logger.debug(f"Resolved key '{key}' to column '{col_name}' in {description}.")
-        
-    # Clean and normalize Call ID
-    call_id_col = resolved_cols["call_id"]
-    
-    # Normalize empty values in Call ID
-    df = df[df[call_id_col].notna()]
-    df[call_id_col] = df[call_id_col].astype(str).str.strip()
-    
-    # Drop rows where Call ID is empty or 'nan'
-    df = df[df[call_id_col] != ""]
-    df = df[df[call_id_col].str.lower() != "nan"]
-    
-    # Handle duplicates
-    initial_len = len(df)
-    duplicates_count = df.duplicated(subset=[call_id_col]).sum()
-    if duplicates_count > 0:
-        logger.warning(f"Found {duplicates_count} duplicate Call IDs in {description}. Keeping first occurrence.")
-        df = df.drop_duplicates(subset=[call_id_col], keep="first")
-        
-    return df, resolved_cols, duplicates_count
+    return df
 
 def main():
     # Make sure output directory exists
     os.makedirs(config.OUTPUT_DIR, exist_ok=True)
     
-    # Check if input files exist
-    if not os.path.exists(config.CALLS_CSV_PATH) or not os.path.exists(config.MANUAL_AUDIT_CSV_PATH):
-        logger.error("Input CSV files are missing. Please place them in input/ directory.")
-        print(f"Error: Make sure input files exist at:\n- {config.CALLS_CSV_PATH}\n- {config.MANUAL_AUDIT_CSV_PATH}")
+    # Verify input files exist
+    if (not os.path.exists(config.CALLS_CSV_PATH) or 
+        not os.path.exists(config.MANUAL_AUDIT_CSV_PATH) or
+        not os.path.exists(config.CALL_JSON_CSV_PATH)):
+        logger.error("Required input CSV files are missing. Please place calls.csv, manual_audit.csv, and call_jsons.csv in input/ directory.")
         sys.exit(1)
         
-    # Step 1: Load both CSVs
+    # Step 1: Load three CSVs
     try:
-        calls_df, calls_cols, calls_dups = load_and_preprocess_csv(
-            config.CALLS_CSV_PATH, config.CALLS_REQUIRED_COLS, "calls.csv"
-        )
-        manual_df, manual_cols, manual_dups = load_and_preprocess_csv(
-            config.MANUAL_AUDIT_CSV_PATH, config.MANUAL_AUDIT_REQUIRED_COLS, "manual_audit.csv"
-        )
+        calls_df = load_and_preprocess_csv(config.CALLS_CSV_PATH, "calls.csv")
+        manual_df = load_and_preprocess_csv(config.MANUAL_AUDIT_CSV_PATH, "manual_audit.csv")
+        call_jsons_df = load_and_preprocess_csv(config.CALL_JSON_CSV_PATH, "call_jsons.csv")
     except Exception as e:
         logger.error(f"Error during loading and preprocessing: {e}")
         sys.exit(1)
         
-    # Step 2: Find intersection of Call IDs present in BOTH files
-    calls_id_col = calls_cols["call_id"]
-    manual_id_col = manual_cols["call_id"]
+    # Step 2: Resolve column names dynamically
+    # Resolve Call ID column in all files
+    calls_id_col = utils.resolve_column(calls_df, ["Call ID", "call_id", "CallID"])
+    manual_id_col = utils.resolve_column(manual_df, ["Call ID", "call_id", "CallID"])
+    call_jsons_id_col = utils.resolve_column(call_jsons_df, ["Call ID", "call_id", "CallID", "PNS_Call_ID"])
     
-    calls_ids = set(calls_df[calls_id_col])
-    manual_ids = set(manual_df[manual_id_col])
-    common_ids = sorted(list(calls_ids.intersection(manual_ids)))
+    if not calls_id_col:
+        raise KeyError("Could not find Call ID column in calls.csv")
+    if not manual_id_col:
+        raise KeyError("Could not find Call ID column in manual_audit.csv")
+    if not call_jsons_id_col:
+        raise KeyError("Could not find Call ID column in call_jsons.csv")
+        
+    # Resolve key columns in manual_audit.csv
+    transcript_col = utils.resolve_column(manual_df, ["Transcript", "transcript"])
+    type_col = utils.resolve_column(manual_df, ["Type", "type"])
     
-    logger.info(f"Intersection of Call IDs: {len(common_ids)} common IDs found.")
+    if not transcript_col:
+        raise KeyError("Could not find Transcript column in manual_audit.csv")
+    if not type_col:
+        raise KeyError("Could not find Type column in manual_audit.csv")
+        
+    # Resolve optional call_json and inferred_details column names
+    calls_call_json_col = utils.resolve_column(calls_df, ["call_json", "Call JSON", "CallJSON"])
+    calls_inferred_col = utils.resolve_column(calls_df, ["inferred_details", "Inferred Details", "InferredDetails"])
     
-    # Set indices to Call ID for easy lookup
-    calls_indexed = calls_df.set_index(calls_id_col)
-    manual_indexed = manual_df.set_index(manual_id_col)
+    call_jsons_call_json_col = utils.resolve_column(call_jsons_df, ["call_json", "Call JSON", "CallJSON"])
+    call_jsons_inferred_col = utils.resolve_column(call_jsons_df, ["inferred_details", "Inferred Details", "InferredDetails"])
     
-    # Step 3, 4 & 5: Validate and generate rows
+    # Step 3: Handle duplicates and standard indexing
+    # Normalize ID series to strings, stripping whitespace
+    calls_df[calls_id_col] = calls_df[calls_id_col].fillna("").astype(str).str.strip()
+    calls_df = calls_df[calls_df[calls_id_col] != ""]
+    calls_df = calls_df[calls_df[calls_id_col].str.lower() != "nan"]
+    calls_dups = calls_df.duplicated(subset=[calls_id_col]).sum()
+    calls_clean = calls_df.drop_duplicates(subset=[calls_id_col], keep="first").set_index(calls_id_col)
+    
+    call_jsons_df[call_jsons_id_col] = call_jsons_df[call_jsons_id_col].fillna("").astype(str).str.strip()
+    call_jsons_df = call_jsons_df[call_jsons_df[call_jsons_id_col] != ""]
+    call_jsons_df = call_jsons_df[call_jsons_df[call_jsons_id_col].str.lower() != "nan"]
+    call_jsons_dups = call_jsons_df.duplicated(subset=[call_jsons_id_col]).sum()
+    call_jsons_clean = call_jsons_df.drop_duplicates(subset=[call_jsons_id_col], keep="first").set_index(call_jsons_id_col)
+
+    # Normalize manual_audit.csv Call ID and Type columns
+    manual_df[manual_id_col] = manual_df[manual_id_col].fillna("").astype(str).str.strip()
+    manual_df = manual_df[manual_df[manual_id_col] != ""]
+    manual_df = manual_df[manual_df[manual_id_col].str.lower() != "nan"]
+    
+    # 3a. Build Transcript Lookup map from ALL rows in manual_audit.csv (so we can retrieve transcripts from 'ai' rows if 'manual' rows are missing them)
+    valid_transcripts = manual_df[manual_df[transcript_col].notna()]
+    valid_transcripts = valid_transcripts[valid_transcripts[transcript_col].astype(str).str.strip() != ""]
+    transcript_lookup = dict(zip(valid_transcripts[manual_id_col], valid_transcripts[transcript_col]))
+    logger.info(f"Built transcript lookup table with {len(transcript_lookup)} transcripts.")
+
+    # 3b. Filter manual_audit.csv to include only rows of Type == 'manual'
+    manual_df['Type_clean'] = manual_df[type_col].fillna("").astype(str).str.strip().str.lower()
+    manual_only_df = manual_df[manual_df['Type_clean'] == 'manual']
+    manual_dups = manual_only_df.duplicated(subset=[manual_id_col]).sum()
+    manual_only_clean = manual_only_df.drop_duplicates(subset=[manual_id_col], keep="first").set_index(manual_id_col)
+    logger.info(f"Filtered manual_audit.csv to {len(manual_only_clean)} manual audit entries.")
+
+    # Step 4: Find the eligible Call IDs
+    # Since call_jsons.csv contains the PNS call records (most call JSONs), and manual audits represent our ground truth,
+    # the eligible Call IDs are the manual audit entries that exist in call_jsons.csv OR calls.csv.
+    manual_only_ids = set(manual_only_clean.index)
+    calls_ids = set(calls_clean.index)
+    pns_ids = set(call_jsons_clean.index)
+    
+    eligible_ids = sorted(list(manual_only_ids.intersection(pns_ids.union(calls_ids))))
+    logger.info(f"Identified {len(eligible_ids)} manual audits with matching Call JSON sources (intersection of manual and PNS/calls).")
+
+    # Step 5: Validate and generate rows
     final_rows = []
     
     # Counters for missing data log
     missing_transcript_count = 0
     missing_call_json_count = 0
     missing_inferred_details_count = 0
-    missing_summary_count = 0
     missing_manual_audit_count = 0
     
-    for call_id in common_ids:
-        calls_row = calls_indexed.loc[call_id]
-        manual_row = manual_indexed.loc[call_id]
+    for call_id in eligible_ids:
+        manual_row = manual_only_clean.loc[call_id]
         
-        # Extract fields from calls.csv
-        call_json = utils.normalize_value(calls_row[calls_cols["call_json"]])
-        inferred_details = utils.normalize_value(calls_row[calls_cols["inferred_details"]])
-        call_summary = utils.normalize_value(calls_row[calls_cols["call_summary"]])
+        # 1. Retrieve Transcript (using cross-type lookup)
+        transcript = utils.normalize_value(transcript_lookup.get(call_id))
         
-        # Extract fields from manual_audit.csv
-        transcript = utils.normalize_value(manual_row[manual_cols["transcript"]])
-        
-        # Validate manual audit expected output fields
+        # 2. Retrieve Call JSON (checks call_jsons.csv first, calls.csv second)
+        call_json = None
+        if call_id in call_jsons_clean.index and call_jsons_call_json_col:
+            call_json = utils.normalize_value(call_jsons_clean.loc[call_id][call_jsons_call_json_col])
+            
+        if (call_json is None or call_json == "") and call_id in calls_clean.index and calls_call_json_col:
+            call_json = utils.normalize_value(calls_clean.loc[call_id][calls_call_json_col])
+            
+        # 3. Retrieve Inferred Details (checks calls.csv first, call_jsons.csv second, manual_audit.csv third)
+        inferred_details = None
+        if call_id in calls_clean.index and calls_inferred_col:
+            inferred_details = utils.normalize_value(calls_clean.loc[call_id][calls_inferred_col])
+            
+        if (inferred_details is None or inferred_details == "") and call_id in call_jsons_clean.index and call_jsons_inferred_col:
+            inferred_details = utils.normalize_value(call_jsons_clean.loc[call_id][call_jsons_inferred_col])
+            
+        if (inferred_details is None or inferred_details == ""):
+            inferred_details = utils.normalize_value(manual_row.get('Inferred Details') or manual_row.get('inferred_details'))
+            
+        # 3a. Reconstruct inferred_details from call_json as a robust fallback
+        if (inferred_details is None or inferred_details == "") and call_json:
+            inferred_details = extract_inferred_details_from_call_json(call_json)
+            
+        # 4. Construct Expected Output from manual row
         expected_output_json = utils.construct_expected_output(manual_row, config.EXPECTED_OUTPUT_FIELDS_MAPPING)
         expected_output_dict = json.loads(expected_output_json)
         
-        # Step 4: Validate. Reject row if ANY required field is empty.
-        # Track counts in order to make statistics mutually exclusive and easy to read.
-        if transcript is None:
+        # Validation checks (mutually exclusive counting)
+        if transcript is None or transcript == "":
             missing_transcript_count += 1
             logger.debug(f"Call ID {call_id}: Discarded due to missing Transcript.")
             continue
             
-        if call_json is None:
+        if call_json is None or call_json == "":
             missing_call_json_count += 1
             logger.debug(f"Call ID {call_id}: Discarded due to missing call_json.")
             continue
             
-        if inferred_details is None:
+        if inferred_details is None or inferred_details == "":
             missing_inferred_details_count += 1
             logger.debug(f"Call ID {call_id}: Discarded due to missing inferred_details.")
-            continue
-            
-        if call_summary is None:
-            missing_summary_count += 1
-            logger.debug(f"Call ID {call_id}: Discarded due to missing Call Summary.")
             continue
             
         if not expected_output_dict:
@@ -150,16 +238,15 @@ def main():
             logger.debug(f"Call ID {call_id}: Discarded due to missing manual audit fields.")
             continue
             
-        # Step 5: Create columns
+        # Format JSON columns for Langfuse output
         formatted_call_json = utils.parse_and_format_json(call_json)
         formatted_inferred = utils.parse_and_format_json(inferred_details)
         metadata_text = utils.construct_metadata(call_id)
         
         final_rows.append({
             "Call JSON": formatted_call_json,
-            "Inferred details": formatted_inferred,
-            "Call Summary": call_summary,
             "Transcript": transcript,
+            "Inferred details": formatted_inferred,
             "expected_output": expected_output_json,
             "metadata": metadata_text
         })
@@ -177,13 +264,14 @@ def main():
         
     # Statistics Logging
     report_lines = [
-        f"Rows in calls.csv : {len(calls_df) + calls_dups}",
-        f"Rows in manual audit : {len(manual_df) + manual_dups}",
-        f"Common Call IDs : {len(common_ids)}",
+        f"Rows in calls.csv : {len(calls_df)}",
+        f"Rows in manual audit : {len(manual_df)}",
+        f"Manual entries (Type == 'manual') : {len(manual_only_df)}",
+        f"Rows in call_jsons.csv : {len(call_jsons_df)}",
+        f"Eligible Call IDs for matching : {len(eligible_ids)}",
         f"Missing transcript : {missing_transcript_count}",
         f"Missing call_json : {missing_call_json_count}",
         f"Missing inferred_details : {missing_inferred_details_count}",
-        f"Missing summary : {missing_summary_count}",
         f"Missing manual audit : {missing_manual_audit_count}",
         f"Final dataset size : {len(output_df)}"
     ]
@@ -193,7 +281,9 @@ def main():
     if calls_dups > 0:
         duplicates_lines.append(f"Duplicate Call IDs removed from calls.csv: {calls_dups}")
     if manual_dups > 0:
-        duplicates_lines.append(f"Duplicate Call IDs removed from manual_audit.csv: {manual_dups}")
+        duplicates_lines.append(f"Duplicate Call IDs removed from manual_audit.csv (manual type): {manual_dups}")
+    if call_jsons_dups > 0:
+        duplicates_lines.append(f"Duplicate Call IDs removed from call_jsons.csv: {call_jsons_dups}")
         
     full_report = "\n".join(report_lines)
     if duplicates_lines:

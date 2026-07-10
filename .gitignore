@@ -12,3 +12,9 @@ ENV/
 .cache/
 output/*.xlsx
 output/~$*.xlsx
+
+# Exclude data CSV files and input/output directories
+*.csv
+**/input/
+**/output/
+

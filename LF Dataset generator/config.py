@@ -8,6 +8,7 @@ OUTPUT_DIR = os.path.join(BASE_DIR, "output")
 # Input File Paths
 CALLS_CSV_PATH = os.path.join(INPUT_DIR, "calls.csv")
 MANUAL_AUDIT_CSV_PATH = os.path.join(INPUT_DIR, "manual_audit.csv")
+CALL_JSON_CSV_PATH = os.path.join(INPUT_DIR, "call_jsons.csv")
 
 # Output File Paths
 LANGFUSE_DATASET_CSV_PATH = os.path.join(OUTPUT_DIR, "langfuse_dataset.csv")
@@ -16,15 +17,19 @@ GENERATION_REPORT_TXT_PATH = os.path.join(OUTPUT_DIR, "generation_report.txt")
 # Required columns in calls.csv
 CALLS_REQUIRED_COLS = {
     "call_id": ["Call ID", "call_id", "CallID"],
-    "call_json": ["call_json", "Call JSON", "CallJSON"],
-    "inferred_details": ["inferred_details", "Inferred Details", "InferredDetails"],
-    "call_summary": ["Call Summary", "call_summary", "CallSummary"]
+    "inferred_details": ["inferred_details", "Inferred Details", "InferredDetails"]
 }
 
 # Required columns in manual_audit.csv
 MANUAL_AUDIT_REQUIRED_COLS = {
     "call_id": ["Call ID", "call_id", "CallID"],
     "transcript": ["Transcript", "transcript", "Transcript Details"]
+}
+
+# Required columns in call_jsons.csv
+CALL_JSON_REQUIRED_COLS = {
+    "call_id": ["Call ID", "call_id", "CallID"],
+    "call_json": ["call_json", "Call JSON", "CallJSON"]
 }
 
 # Mapping of Expected Output JSON fields to potential columns in manual_audit.csv

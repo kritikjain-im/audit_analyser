@@ -2,6 +2,21 @@ import json
 import pandas as pd
 import numpy as np
 
+def load_csv_robust(file_path):
+    """
+    Loads a CSV file with automatic encoding fallback.
+    """
+    encodings = ['utf-8', 'latin1', 'cp1252', 'utf-8-sig']
+    for enc in encodings:
+        try:
+            return pd.read_csv(file_path, dtype=str, encoding=enc)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    # Fallback with replacement of un-decodable bytes
+    return pd.read_csv(file_path, dtype=str, encoding='utf-8', errors='replace')
+
+
+
 def normalize_value(val):
     """
     Strips whitespace and normalizes empty-like values (NaN, 'NULL', 'None', 'nan', etc.) to None.

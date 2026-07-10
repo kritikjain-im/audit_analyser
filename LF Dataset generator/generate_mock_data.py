@@ -7,6 +7,7 @@ os.makedirs(INPUT_DIR, exist_ok=True)
 
 calls_path = os.path.join(INPUT_DIR, "calls.csv")
 manual_path = os.path.join(INPUT_DIR, "manual_audit.csv")
+call_jsons_path = os.path.join(INPUT_DIR, "call_jsons.csv")
 
 # Create calls.csv data
 calls_data = [
@@ -34,11 +35,11 @@ calls_data = [
         "inferred_details": '{"buyer_location": "Delhi"}',
         "other_metadata": "some_meta_2"
     },
-    # 4. Missing call_json
+    # 4. Missing call_json in calls.csv (but provided in call_jsons.csv)
     {
         "Call ID": "1003",
         "Call Summary": "Buyer Charlie wants steel rods.",
-        "call_json": "NULL",  # Normalized to None
+        "call_json": "",  # Empty here, should fallback to call_jsons.csv
         "inferred_details": '{"buyer_location": "Pune"}',
         "other_metadata": "some_meta_3"
     },
@@ -50,10 +51,10 @@ calls_data = [
         "inferred_details": "",  # Normalized to None
         "other_metadata": "some_meta_4"
     },
-    # 6. Missing Call Summary
+    # 6. Missing Call Summary (No longer required! Should succeed and be in output)
     {
         "Call ID": "1005",
-        "Call Summary": "  ",  # Whitespace, normalized to None
+        "Call Summary": "  ",
         "call_json": '{"buyer_name": "Eve"}',
         "inferred_details": '{"buyer_location": "Chennai"}',
         "other_metadata": "some_meta_5"
@@ -74,6 +75,14 @@ calls_data = [
         "inferred_details": '{"buyer_location": "Goa"}',
         "other_metadata": "some_meta_7"
     }
+]
+
+# Create call_jsons.csv data
+call_jsons_data = [
+    # Call ID 1003 is missing call_json in calls.csv, so we resolve it from here:
+    {"Call ID": "1003", "call_json": '{"buyer_name": "Charlie", "product": "steel rods"}'},
+    # Call ID 1001 is already present in calls.csv (duplicate or match)
+    {"Call ID": "1001", "call_json": '{"buyer_name": "Alice", "product": "Aluminium Sheets"}'},
 ]
 
 # Create manual_audit.csv data
@@ -98,7 +107,7 @@ manual_data = [
         "Ai: Buyer Name": "Bob",
         "Verdict": "Yes"
     },
-    # 3. Missing call_json (matches 1003)
+    # 3. Missing call_json in calls.csv (matches 1003, but fallback resolves it)
     {
         "Call ID": "1003",
         "Transcript": "This is Charlie calling. I need steel rods.",
@@ -112,7 +121,7 @@ manual_data = [
         "Ai: Buyer Name": "Dave",
         "Verdict": "Yes"
     },
-    # 5. Missing Call Summary (matches 1005)
+    # 5. Missing Call Summary (matches 1005 - Call Summary is no longer required)
     {
         "Call ID": "1005",
         "Transcript": "I am Eve. I need PVC pipes.",
@@ -139,8 +148,10 @@ manual_data = [
 ]
 
 pd.DataFrame(calls_data).to_csv(calls_path, index=False)
+pd.DataFrame(call_jsons_data).to_csv(call_jsons_path, index=False)
 pd.DataFrame(manual_data).to_csv(manual_path, index=False)
 
 print("Mock files created successfully:")
 print(f"- calls.csv: {len(calls_data)} rows written.")
+print(f"- call_jsons.csv: {len(call_jsons_data)} rows written.")
 print(f"- manual_audit.csv: {len(manual_data)} rows written.")

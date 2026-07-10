@@ -1,9 +1,0 @@
-Call ID,Call Summary,call_json,inferred_details,other_metadata
-1001,Buyer Alice from Mumbai wants to buy Aluminium Sheets.,"{""buyer_name"": ""Alice"", ""product"": ""Aluminium Sheets""}","{""buyer_location"": ""Mumbai"", ""buyer_contact"": ""9876543210""}",some_meta_1
-1001,DUPLICATE Summary.,"{""buyer_name"": ""Alice-Dup""}","{""buyer_location"": ""Mumbai""}",some_meta_dup
-1002,Buyer Bob wants copper wire.,"{""buyer_name"": ""Bob""}","{""buyer_location"": ""Delhi""}",some_meta_2
-1003,Buyer Charlie wants steel rods.,NULL,"{""buyer_location"": ""Pune""}",some_meta_3
-1004,Buyer Dave wants iron pipes.,"{""buyer_name"": ""Dave""}",,some_meta_4
-1005,  ,"{""buyer_name"": ""Eve""}","{""buyer_location"": ""Chennai""}",some_meta_5
-1006,Buyer Frank wants glass cups.,"{""buyer_name"": ""Frank""}","{""buyer_location"": ""Kolkata""}",some_meta_6
-2001,Only in calls.,"{""buyer_name"": ""George""}","{""buyer_location"": ""Goa""}",some_meta_7
