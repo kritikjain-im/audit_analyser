@@ -1,0 +1,5 @@
+Call ID,Seller GLID,Caller GLID,Audit Column
+101,111,222,Audit_Result_A
+,333,444,Audit_Result_B
+,555,666,Audit_Result_C
+999,777,888,Audit_Result_D

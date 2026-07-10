@@ -1,0 +1,12 @@
+Rows in calls.csv : 8
+Rows in manual audit : 7
+Common Call IDs : 6
+Missing transcript : 1
+Missing call_json : 1
+Missing inferred_details : 1
+Missing summary : 1
+Missing manual audit : 1
+Final dataset size : 1
+
+Duplicate Records:
+Duplicate Call IDs removed from calls.csv: 1

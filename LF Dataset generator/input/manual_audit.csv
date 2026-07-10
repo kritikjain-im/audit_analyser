@@ -1,0 +1,8 @@
+Call ID,Transcript,Ai: Buyer Name,Ai: Buyer Location,Buyer Contact Details,Product Name,Verdict,Accuracy Score,Completeness Score,Reasoning
+1001,"Hello, I am Alice. I am from Mumbai. I want to buy Aluminium Sheets.",Alice,Mumbai,9876543210,Aluminium Sheets,Yes,100.0,90,Matches all details discussed in call.
+1002,NaN,Bob,,,,Yes,,,
+1003,This is Charlie calling. I need steel rods.,Charlie,,,,No,,,
+1004,I am Dave. I need iron pipes.,Dave,,,,Yes,,,
+1005,I am Eve. I need PVC pipes.,Eve,,,,Yes,,,
+1006,"Hello, I am Frank. Let me tell you what I need...",,,,,NaN,,,None
+3001,Only in manual audit.,Henry,,,,Yes,,,
