@@ -71,9 +71,9 @@ def parse_and_format_json(val):
     except (json.JSONDecodeError, TypeError):
         return val_norm
 
-def construct_input_column(call_json, inferred_details, summary, transcript):
+def construct_input_column(call_json, inferred_details, transcript):
     """
-    Concatenates the four required input sections in the exact order with separators.
+    Concatenates the three required input sections in the exact order with separators.
     """
     # Ensure they are formatted/parsed JSONs where applicable
     formatted_call_json = parse_and_format_json(call_json)
@@ -82,11 +82,11 @@ def construct_input_column(call_json, inferred_details, summary, transcript):
     sections = [
         f"Call JSON\n------------------\n{formatted_call_json}",
         f"Inferred Details\n------------------\n{formatted_inferred}",
-        f"Call Summary\n------------------\n{normalize_value(summary)}",
         f"Transcript\n------------------\n{normalize_value(transcript)}"
     ]
     
     return "\n\n".join(sections)
+
 
 def construct_expected_output(row, mapping):
     """

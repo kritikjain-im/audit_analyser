@@ -239,14 +239,11 @@ def main():
             continue
             
         # Format JSON columns for Langfuse output
-        formatted_call_json = utils.parse_and_format_json(call_json)
-        formatted_inferred = utils.parse_and_format_json(inferred_details)
+        input_text = utils.construct_input_column(call_json, inferred_details, transcript)
         metadata_text = utils.construct_metadata(call_id)
         
         final_rows.append({
-            "Call JSON": formatted_call_json,
-            "Transcript": transcript,
-            "Inferred details": formatted_inferred,
+            "input": input_text,
             "expected_output": expected_output_json,
             "metadata": metadata_text
         })
