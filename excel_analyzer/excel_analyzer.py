@@ -5,6 +5,10 @@ import glob
 import logging
 import re
 import pandas as pd
+
+# Add the current folder to sys.path so we can import excel_writer
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
 from excel_writer import create_excel_report
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -71,7 +75,7 @@ def normalize_badge(text: str) -> str:
     return None
 
 def normalize_value(val) -> str:
-    """Clean and return a normalized string for openpyxl reporting."""
+    """Clean and return a normalized string for reporting."""
     if pd.isna(val) or val is None:
         return "Correct (Not Discussed)"
     
@@ -83,7 +87,6 @@ def normalize_value(val) -> str:
     if norm:
         return norm
         
-    # String fallbacks
     val_upper = val_str.upper()
     if "NOT DISCUSSED" in val_upper:
         return "Correct (Not Discussed)"
@@ -142,9 +145,8 @@ def map_columns(headers, fields_targets, sheet_name="Sheet"):
             break
             
     if not call_id_col:
-        # Substring fallback for Call ID
         for clean_h, orig_h in normalized_headers.items():
-            if "callid" in clean_h or "callid" in clean_h:
+            if "callid" in clean_h:
                 call_id_col = orig_h
                 break
                 
@@ -158,7 +160,6 @@ def map_columns(headers, fields_targets, sheet_name="Sheet"):
             auditor_col = normalized_headers[clean_t]
             break
     if not auditor_col:
-        # Substring fallback for Auditor Name
         for clean_h, orig_h in normalized_headers.items():
             if "auditor" in clean_h or "audited" in clean_h:
                 auditor_col = orig_h
@@ -168,7 +169,6 @@ def map_columns(headers, fields_targets, sheet_name="Sheet"):
     # Map the 12 Fields
     for field, targets in fields_targets.items():
         matched_header = None
-        # Exact match
         for t in targets:
             clean_t = re.sub(r'[^a-zA-Z0-9]', '', t).lower()
             if clean_t in normalized_headers:
@@ -178,25 +178,19 @@ def map_columns(headers, fields_targets, sheet_name="Sheet"):
         if matched_header:
             mapping[field] = matched_header
         else:
-            # Substring match fallback
             for clean_h, orig_h in normalized_headers.items():
                 for t in targets:
                     clean_t = re.sub(r'[^a-zA-Z0-9]', '', t).lower()
-                    # Filter out subfields like 'reason' or 'sublabel' from matching main field
                     if clean_t in clean_h and not any(sub in clean_h for sub in ["reason", "sublabel", "subfield"]):
                         matched_header = orig_h
                         break
                 if matched_header:
                     break
-            if matched_header:
-                logger.info(f"[{sheet_name}] Substring match: mapped field '{field}' to column '{matched_header}'")
-                mapping[field] = matched_header
-            else:
-                mapping[field] = None
+            mapping[field] = matched_header
                 
     return mapping
 
-def get_next_filename(base_dir, base_name="AI_Auditor_Comparison_Sheet"):
+def get_next_filename(base_dir, base_name="Compact_Analysis"):
     version = 1
     while True:
         candidate = os.path.join(base_dir, f"{base_name}_v{version}.xlsx")
@@ -204,269 +198,226 @@ def get_next_filename(base_dir, base_name="AI_Auditor_Comparison_Sheet"):
             return candidate
         version += 1
 
+def find_verdict_col(df):
+    for col in df.columns:
+        if str(col).lower().strip() == 'verdict':
+            return col
+    for col in df.columns:
+        if 'verdict' in str(col).lower():
+            return col
+    return None
+
+def compute_compact_summary(df, mapping):
+    """Computes category counts and accuracies for the 12 fields."""
+    field_display_names = {
+        "buyer_name": "Buyer Name",
+        "buyer_location": "Buyer Location",
+        "buyer_contact": "Buyer Contact Details",
+        "lead_tag": "Lead Tag",
+        "product_name": "Product Name",
+        "specifications": "Specifications",
+        "quantity": "Buyer Required Quantity",
+        "price": "Price Quoted by Seller",
+        "actionables": "Seller Actionables",
+        "buyer_intent": "Buyer Intent",
+        "buyer_questions": "Buyer Questions",
+        "reminder": "Reminder"
+    }
+    
+    results = []
+    for field in FIELDS:
+        display_name = field_display_names.get(field, field)
+        col_name = mapping.get(field)
+        
+        counts = {
+            "Correct": 0,
+            "Correct (ND)": 0,
+            "Inferred": 0,
+            "Incorrect": 0,
+            "Missing": 0,
+            "Hallucination": 0
+        }
+        
+        if col_name and col_name in df.columns:
+            for val in df[col_name]:
+                norm_val = normalize_value(val)
+                if norm_val == "Correct (Not Discussed)":
+                    norm_val = "Correct (ND)"
+                if norm_val in counts:
+                    counts[norm_val] += 1
+                    
+        field_total = sum(counts.values())
+        cum_correct = counts["Correct"] + counts["Correct (ND)"] + counts["Inferred"]
+        average = cum_correct / field_total if field_total > 0 else 0.0
+        
+        results.append({
+            "Field Name": display_name,
+            "Cumulative Correct": cum_correct,
+            "Correct": counts["Correct"],
+            "Correct (ND)": counts["Correct (ND)"],
+            "Inferred": counts["Inferred"],
+            "Missing": counts["Missing"],
+            "Incorrect": counts["Incorrect"],
+            "Hallucination": counts["Hallucination"],
+            "Total Calls": field_total,
+            "Average": average
+        })
+        
+    sum_cum_correct = sum(r["Cumulative Correct"] for r in results)
+    sum_total_calls = sum(r["Total Calls"] for r in results)
+    overall_accuracy = sum_cum_correct / sum_total_calls if sum_total_calls > 0 else 0.0
+    
+    overall_dict = {
+        "total_correct": sum_cum_correct,
+        "total_calls_fields": sum_total_calls,
+        "overall_accuracy": overall_accuracy
+    }
+    
+    return results, overall_dict
+
 def main():
-    parser = argparse.ArgumentParser(description="Direct Excel-to-Excel Call Audit Comparison Analyser")
-    parser.add_argument("--input-file", "-i", help="Path to input Excel workbook")
+    parser = argparse.ArgumentParser(description="Direct Call Audit Comparison Analyser")
+    parser.add_argument("--input-file", "-i", help="Path to input Excel workbook or Manual Audits CSV")
     parser.add_argument("--output-dir", "-o", default="output", help="Directory to save output reports")
-    parser.add_argument("--manual-sheet", default=None, help="Name of manual audits sheet")
-    parser.add_argument("--ai-sheet", default=None, help="Name of AI audits sheet")
+    parser.add_argument("--manual-sheet", default=None, help="Name of manual audits sheet (if Excel)")
+    parser.add_argument("--ai-sheet", default=None, help="Name of AI audits sheet or path to AI Audits CSV")
     
     args = parser.parse_args()
     
-    # 1. Locate Input File
+    # Setup default paths if not provided
     input_path = args.input_file
     if not input_path:
-        # Search output or input directories for xlsx files
-        xlsx_candidates = []
-        scan_dirs = ["input", "input2", "."]
-        for s_dir in scan_dirs:
-            if os.path.exists(s_dir):
-                xlsx_candidates.extend(glob.glob(os.path.join(s_dir, "*.xlsx")))
-        
-        # Exclude generated output files if they are in the scan path
-        xlsx_candidates = [f for f in xlsx_candidates if "AI_Audit_Analysis" not in f and "AI_Auditor_Comparison" not in f]
-        
-        if xlsx_candidates:
-            input_path = sorted(xlsx_candidates)[0]
-            logger.info(f"Auto-detected input Excel file: {input_path}")
+        default_manual = os.path.join("input", "Manual Audits.csv")
+        default_excel = os.path.join("input", "Langfuse Datasets.xlsx")
+        if os.path.exists(default_manual):
+            input_path = default_manual
+        elif os.path.exists(default_excel):
+            input_path = default_excel
         else:
-            logger.error("No input Excel workbook specified or auto-detected.")
+            logger.error("No input file specified or default found.")
             sys.exit(1)
             
-    if not os.path.exists(input_path):
-        logger.error(f"Input file '{input_path}' does not exist.")
-        sys.exit(1)
+    ai_sheet_or_file = args.ai_sheet
+    if not ai_sheet_or_file and input_path.lower().endswith('.csv'):
+        default_ai = os.path.join("input", "AI Audits.csv")
+        if os.path.exists(default_ai):
+            ai_sheet_or_file = default_ai
+            
+    logger.info(f"Using Manual Input File: {input_path}")
+    if ai_sheet_or_file:
+        logger.info(f"Using AI Input File/Sheet: {ai_sheet_or_file}")
         
     os.makedirs(args.output_dir, exist_ok=True)
     
-    # 2. Load DataFrames (Support CSV and Excel)
+    # 2. Load DataFrames
     df_manual = None
     df_ai = None
-    manual_sheet = args.manual_sheet or "Manual Audits"
-    ai_sheet = args.ai_sheet or "AI Audits"
     
     is_csv = input_path.lower().endswith('.csv')
     
     if is_csv:
-        logger.info(f"Processing input path as a CSV file: {input_path}")
         try:
-            df = pd.read_csv(input_path, encoding='utf-8')
+            df_manual = pd.read_csv(input_path, encoding='utf-8')
         except UnicodeDecodeError:
-            df = pd.read_csv(input_path, encoding='latin1')
-        except Exception as e:
-            logger.error(f"Failed to read CSV file '{input_path}': {str(e)}")
-            sys.exit(1)
+            df_manual = pd.read_csv(input_path, encoding='latin1')
             
-        # Check if user specified a separate AI CSV via --ai-sheet
-        if args.ai_sheet and args.ai_sheet.lower().endswith('.csv'):
-            ai_csv_path = args.ai_sheet
-            if not os.path.exists(ai_csv_path):
-                logger.error(f"AI CSV file '{ai_csv_path}' specified via --ai-sheet does not exist.")
-                sys.exit(1)
-            logger.info(f"Using separate AI CSV file: {ai_csv_path}")
-            df_manual = df
+        if ai_sheet_or_file and ai_sheet_or_file.lower().endswith('.csv'):
             try:
-                df_ai = pd.read_csv(ai_csv_path, encoding='utf-8')
+                df_ai = pd.read_csv(ai_sheet_or_file, encoding='utf-8')
             except UnicodeDecodeError:
-                df_ai = pd.read_csv(ai_csv_path, encoding='latin1')
-            except Exception as e:
-                logger.error(f"Failed to read AI CSV file '{ai_csv_path}': {str(e)}")
-                sys.exit(1)
+                df_ai = pd.read_csv(ai_sheet_or_file, encoding='latin1')
         else:
-            # Split single CSV file containing both AI and Manual audits
-            headers = list(df.columns)
-            mapping_temp = map_columns(headers, FIELD_TARGETS, "CSV")
-            call_id_col = mapping_temp.get("call_id")
-            if not call_id_col:
-                logger.error(f"Could not locate 'Call ID' column in CSV. Headers: {headers}")
-                sys.exit(1)
-                
-            # Drop empty Call ID rows
-            df = df.dropna(subset=[call_id_col])
-            
-            auditor_col = mapping_temp.get("auditor")
-            type_col = None
-            for col in df.columns:
-                if str(col).lower().strip() == 'type':
-                    type_col = col
-                    break
-                    
-            ai_mask = pd.Series(False, index=df.index)
-            if type_col is not None:
-                ai_mask = ai_mask | (df[type_col].astype(str).str.lower().str.strip() == 'ai')
-            if auditor_col is not None:
-                ai_mask = ai_mask | (df[auditor_col].astype(str).str.contains('AI', case=False, na=False))
-                
-            df_ai = df[ai_mask]
-            df_manual = df[~ai_mask]
-            
-            logger.info(f"Split single CSV: {len(df_manual)} Manual rows, {len(df_ai)} AI rows.")
+            logger.error("AI CSV file must be provided via --ai-sheet when manual file is CSV.")
+            sys.exit(1)
     else:
-        # Load Workbook sheets (Excel)
+        # Load from Excel sheets
         try:
             xls = pd.ExcelFile(input_path)
-        except Exception as e:
-            logger.error(f"Failed to read Excel file '{input_path}': {str(e)}")
-            sys.exit(1)
+            sheet_names = xls.sheet_names
             
-        sheet_names = xls.sheet_names
-        logger.info(f"Sheets found in workbook: {sheet_names}")
-        
-        # Determine Manual sheet name
-        manual_sheet = args.manual_sheet
-        if not manual_sheet:
-            for name in sheet_names:
-                if "manual" in name.lower():
-                    manual_sheet = name
-                    break
-            if not manual_sheet and len(sheet_names) > 0:
-                manual_sheet = sheet_names[0]
+            man_sheet = args.manual_sheet or "Manual Audits"
+            if man_sheet not in sheet_names:
+                man_sheet = sheet_names[0]
                 
-        # Determine AI sheet name
-        ai_sheet = args.ai_sheet
-        if not ai_sheet:
-            for name in sheet_names:
-                if "ai" in name.lower() and name != manual_sheet:
-                    ai_sheet = name
-                    break
-            if not ai_sheet and len(sheet_names) > 1:
-                ai_sheet = sheet_names[1]
+            ai_sheet = args.ai_sheet or "AI Audits"
+            if ai_sheet not in sheet_names:
+                ai_sheet = sheet_names[1] if len(sheet_names) > 1 else sheet_names[0]
                 
-        if not manual_sheet or not ai_sheet:
-            logger.error("Could not determine Manual and AI sheets in the workbook.")
-            sys.exit(1)
-            
-        logger.info(f"Using Manual Sheet: '{manual_sheet}'")
-        logger.info(f"Using AI Sheet: '{ai_sheet}'")
-        
-        try:
-            df_manual = pd.read_excel(input_path, sheet_name=manual_sheet)
+            df_manual = pd.read_excel(input_path, sheet_name=man_sheet)
             df_ai = pd.read_excel(input_path, sheet_name=ai_sheet)
         except Exception as e:
-            logger.error(f"Failed to load sheets: {str(e)}")
+            logger.error(f"Failed to read Excel workbook: {str(e)}")
             sys.exit(1)
+            
+    # Clean Verdict columns and filter to 'yes' or 'no'
+    verdict_man_col = find_verdict_col(df_manual)
+    if verdict_man_col:
+        df_manual = df_manual[df_manual[verdict_man_col].astype(str).str.strip().str.lower().isin(['yes', 'no'])]
+    else:
+        logger.warning("Could not find Verdict column in Manual dataset. Skipping filtering.")
         
-    # 3. Map Columns
-    manual_mapping = map_columns(df_manual.columns, FIELD_TARGETS, manual_sheet)
-    ai_mapping = map_columns(df_ai.columns, FIELD_TARGETS, ai_sheet)
+    verdict_ai_col = find_verdict_col(df_ai)
+    if verdict_ai_col:
+        df_ai = df_ai[df_ai[verdict_ai_col].astype(str).str.strip().str.lower().isin(['yes', 'no'])]
+    else:
+        logger.warning("Could not find Verdict column in AI dataset. Skipping filtering.")
+        
+    # Map columns
+    manual_mapping = map_columns(df_manual.columns, FIELD_TARGETS, "Manual")
+    ai_mapping = map_columns(df_ai.columns, FIELD_TARGETS, "AI")
     
-    if not manual_mapping.get("call_id"):
-        logger.error(f"Could not locate 'Call ID' column in Manual sheet. Headers: {list(df_manual.columns)}")
-        sys.exit(1)
-    if not ai_mapping.get("call_id"):
-        logger.error(f"Could not locate 'Call ID' column in AI sheet. Headers: {list(df_ai.columns)}")
-        sys.exit(1)
-        
-    # Check mapped fields
-    missing_manual_fields = [f for f in FIELDS if not manual_mapping.get(f)]
-    missing_ai_fields = [f for f in FIELDS if not ai_mapping.get(f)]
-    
-    if missing_manual_fields:
-        logger.warning(f"Fields missing from Manual sheet mapping: {missing_manual_fields}. These fields will default to empty.")
-    if missing_ai_fields:
-        logger.warning(f"Fields missing from AI sheet mapping: {missing_ai_fields}. These fields will default to 'Correct'.")
-        
-    # 4. Extract Manual Data (De-duplicating Call IDs)
-    manual_calls = {}
     manual_call_id_col = manual_mapping["call_id"]
-    manual_auditor_col = manual_mapping.get("auditor")
+    ai_call_id_col = ai_mapping["call_id"]
     
-    for idx, row in df_manual.iterrows():
-        raw_cid = row[manual_call_id_col]
-        if pd.isna(raw_cid):
-            continue
-        # Clean Call ID
-        call_id = str(raw_cid).split('.')[0].strip()
-        if not call_id:
-            continue
-            
-        if call_id in manual_calls:
-            logger.warning(f"Duplicate Call ID '{call_id}' in Manual sheet. Discarding duplicate row.")
-            continue
-            
-        # Get Auditor Name
-        auditor = "Manual Auditor"
-        if manual_auditor_col and not pd.isna(row[manual_auditor_col]):
-            auditor = str(row[manual_auditor_col]).strip()
-            
-        # Build field map (keeping raw values for blank check)
+    if not manual_call_id_col or not ai_call_id_col:
+        logger.error("Could not map Call ID columns in one or both datasets.")
+        sys.exit(1)
+        
+    df_manual = df_manual.dropna(subset=[manual_call_id_col])
+    df_ai = df_ai.dropna(subset=[ai_call_id_col])
+    
+    # Calculate Sheet 1: AI Audits Summary
+    summary_ai, overall_ai = compute_compact_summary(df_ai, ai_mapping)
+    
+    # Calculate Sheet 2: Manual Audits Summary
+    summary_manual, overall_manual = compute_compact_summary(df_manual, manual_mapping)
+    
+    # Calculate Sheet 3: AI Matched Summary (AI audits for manual call IDs)
+    manual_cids = set(df_manual[manual_call_id_col].astype(str).str.split('.').str[0].str.strip())
+    df_ai_matched = df_ai[df_ai[ai_call_id_col].astype(str).str.split('.').str[0].str.strip().isin(manual_cids)]
+    summary_ai_matched, overall_ai_matched = compute_compact_summary(df_ai_matched, ai_mapping)
+    
+    # Extract AI/Manual calls dictionary for comparison (similar to old comparison code)
+    manual_calls = {}
+    manual_auditor_col = manual_mapping.get("auditor")
+    for _, row in df_manual.iterrows():
+        call_id = str(row[manual_call_id_col]).split('.')[0].strip()
+        auditor = str(row[manual_auditor_col]).strip() if (manual_auditor_col and not pd.isna(row[manual_auditor_col])) else "Manual Auditor"
+        
         field_vals = {}
         for f in FIELDS:
             col_name = manual_mapping.get(f)
             val = row[col_name] if col_name else None
-            # Keep raw/blank check representation
-            if pd.isna(val) or val is None:
-                val = None
-            else:
-                val_str = str(val).strip()
-                if val_str == "" or val_str.lower() in ["none", "null", "-", "nan"]:
-                    val = None
-                else:
-                    val = val_str
-            field_vals[f] = val
+            field_vals[f] = None if (pd.isna(val) or val is None or str(val).strip().lower() in ["", "none", "null", "-", "nan"]) else str(val).strip()
             
-        manual_calls[call_id] = {
-            "auditor": auditor,
-            "fields": field_vals
-        }
+        manual_calls[call_id] = {"auditor": auditor, "fields": field_vals}
         
-    # 5. Extract AI Data (De-duplicating Call IDs)
     ai_calls = {}
-    ai_call_id_col = ai_mapping["call_id"]
-    
-    for idx, row in df_ai.iterrows():
-        raw_cid = row[ai_call_id_col]
-        if pd.isna(raw_cid):
-            continue
-        call_id = str(raw_cid).split('.')[0].strip()
-        if not call_id:
-            continue
-            
-        if call_id in ai_calls:
-            logger.warning(f"Duplicate Call ID '{call_id}' in AI sheet. Discarding duplicate row.")
-            continue
-            
-        # Build field map (keeping raw values for comparison)
+    for _, row in df_ai.iterrows():
+        call_id = str(row[ai_call_id_col]).split('.')[0].strip()
         field_vals = {}
         for f in FIELDS:
             col_name = ai_mapping.get(f)
             val = row[col_name] if col_name else None
-            if pd.isna(val) or val is None:
-                val = None
-            else:
-                val_str = str(val).strip()
-                if val_str == "" or val_str.lower() in ["none", "null", "-", "nan"]:
-                    val = None
-                else:
-                    val = val_str
-            field_vals[f] = val
+            field_vals[f] = None if (pd.isna(val) or val is None or str(val).strip().lower() in ["", "none", "null", "-", "nan"]) else str(val).strip()
             
-        ai_calls[call_id] = {
-            "fields": field_vals
-        }
+        ai_calls[call_id] = {"fields": field_vals}
         
-    # 6. Intersect to common Call IDs
-    manual_cids = set(manual_calls.keys())
-    ai_cids = set(ai_calls.keys())
-    common_cids = sorted(list(manual_cids & ai_cids))
+    # Intersect call IDs
+    common_cids = sorted(list(set(manual_calls.keys()) & set(ai_calls.keys())))
+    logger.info(f"Overlap Call IDs compared: {len(common_cids)}")
     
-    excluded_manual = manual_cids - ai_cids
-    excluded_ai = ai_cids - manual_cids
-    
-    logger.info(f"Manual sheet total calls: {len(manual_cids)}")
-    logger.info(f"AI sheet total calls: {len(ai_cids)}")
-    logger.info(f"Common Call IDs to process: {len(common_cids)}")
-    
-    if excluded_manual:
-        logger.info(f"Manual calls missing in AI sheet (excluded): {sorted(list(excluded_manual))}")
-    if excluded_ai:
-        logger.info(f"AI calls missing in Manual sheet (excluded): {sorted(list(excluded_ai))}")
-        
-    if not common_cids:
-        logger.error("No common Call IDs found between Manual and AI sheets.")
-        sys.exit(1)
-        
-    # 7. Perform Comparisons
+    total_matched_fields = 0
     data_calls = []
     
     for call_id in common_cids:
@@ -481,11 +432,8 @@ def main():
             m_val_raw = m_call["fields"].get(field)
             a_val_raw = a_call["fields"].get(field)
             
-            # Check for blank values
             is_blank = (m_val_raw is None)
-                    
             if is_blank:
-                # Blank matches AI value automatically
                 norm_a_val = normalize_value(a_val_raw)
                 matches_by_field[field] = 1
                 manual_vals[field] = norm_a_val
@@ -498,6 +446,7 @@ def main():
                 ai_vals[field] = norm_a_val
                 
         matches_count = sum(matches_by_field.values())
+        total_matched_fields += matches_count
         accuracy = (matches_count / len(FIELDS)) * 100
         
         data_calls.append({
@@ -511,20 +460,50 @@ def main():
             "ai_values": ai_vals
         })
         
-    # 8. Calculate Statistics
-    total_calls = len(data_calls)
+    # Calculate statistics for Sheet 7 (comparative stats)
     field_accuracies = {}
     for field in FIELDS:
         matches = sum(item["matches_by_field"][field] for item in data_calls)
-        field_accuracies[field] = (matches / total_calls) * 100
+        field_accuracies[field] = (matches / len(common_cids)) * 100 if common_cids else 0.0
         
-    overall_accuracy = sum(item["matches"] for item in data_calls) / (total_calls * len(FIELDS)) * 100
+    overall_accuracy = (total_matched_fields / (len(common_cids) * len(FIELDS))) * 100 if common_cids else 0.0
     
-    # 9. Output report
-    output_path = get_next_filename(args.output_dir)
-    logger.info(f"Generating direct sheet analysis report at: {output_path}")
+    # Calculate Sheet 4: Overview Data
+    yes_ai = sum(df_ai[verdict_ai_col].astype(str).str.strip().str.lower() == 'yes') if verdict_ai_col else 0
+    no_ai = sum(df_ai[verdict_ai_col].astype(str).str.strip().str.lower() == 'no') if verdict_ai_col else 0
+    yes_manual = sum(df_manual[verdict_man_col].astype(str).str.strip().str.lower() == 'yes') if verdict_man_col else 0
+    no_manual = sum(df_manual[verdict_man_col].astype(str).str.strip().str.lower() == 'no') if verdict_man_col else 0
     
-    create_excel_report(data_calls, field_accuracies, overall_accuracy, output_path)
+    overview_data = {
+        "ai_summary": {
+            "total": len(df_ai),
+            "yes": yes_ai,
+            "no": no_ai
+        },
+        "manual_summary": {
+            "total": len(df_manual),
+            "yes": yes_manual,
+            "no": no_manual
+        },
+        "comparison_summary": {
+            "matched_calls": len(common_cids),
+            "total_fields": len(common_cids) * len(FIELDS),
+            "matched_fields": total_matched_fields
+        }
+    }
+    
+    output_path = get_next_filename(args.output_dir, "Compact_Analysis")
+    logger.info(f"Generating 7-sheet workbook at: {output_path}")
+    
+    create_excel_report(
+        summary_ai, overall_ai,
+        summary_manual, overall_manual,
+        summary_ai_matched, overall_ai_matched,
+        overview_data,
+        data_calls, field_accuracies, overall_accuracy,
+        output_path
+    )
+    
     logger.info("Excel-to-Excel Call Audit Analyser completed successfully!")
 
 if __name__ == "__main__":
